@@ -146,7 +146,7 @@ def get_draw_boxes(boxes, image):
 
 def main():
     image = cv2.imread("/home/pjvazquez/Imágenes/captura-1-1.jpg")
-    model = facial_landmarks(MODEL_NAME)
+    model = head_pose(MODEL_NAME)
     model.load_model()
     prediction = model.predict(image)
     logger.debug("Prediction: {}".format(prediction['detection_out'].shape))

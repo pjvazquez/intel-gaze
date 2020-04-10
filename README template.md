@@ -7,6 +7,14 @@
 ## Project Set Up and Installation
 *TODO:* Explain the setup procedures to run your project. For instance, this can include your project directory structure, the models you need to download and where to place them etc. Also include details about how to install the dependencies your project requires.
 
+
+/opt/intel/openvino/deployment_tools/open_model_zoo/tools/downloader
+download all models with
+./downloader.py --name head-pose-estimation-adas-0001  -o /mnt/DATA/Python_Projects/intel-gaze
+
+
+
+
 ## Demo
 *TODO:* Explain how to run a basic demo of your model.
 
