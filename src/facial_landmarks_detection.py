@@ -10,7 +10,9 @@ import cv2
 import os
 import sys
 import math
+import json
 import logging as log
+from input_feeder import InputFeeder
 from openvino.inference_engine import IENetwork, IECore
 
 FORMATTER = log.Formatter("%(asctime)s — %(name)s — %(levelname)s — %(message)s")
@@ -20,8 +22,12 @@ logger = log.getLogger(__name__)
 logger.setLevel(log.DEBUG)
 logger.addHandler(console_handler)
 
-CPU_EXTENSION = "/opt/intel/openvino/deployment_tools/inference_engine/lib/intel64/libcpu_extension_sse4.so"
-MODEL_NAME = "/mnt/DATA/Python_Projects/intel-gaze/intel/landmarks-regression-retail-0009/FP32/landmarks-regression-retail-0009.xml"
+# retrieve and parse configuration
+with open("conf/application.conf", "r") as confFile:
+    conf = json.loads(confFile.read())
+
+CPU_EXTENSION = conf['CPU_extension']
+MODEL_NAME = conf['facial_landmarks_model']
 
 class facial_landmarks:
     '''
@@ -70,9 +76,9 @@ class facial_landmarks:
         This method is meant for running predictions on the input image.
         '''
         logger.info("making prediction")
-        processed_image = self.preprocess_input(image)
-        logger.debug("To predict, image shape {}".format(processed_image.shape))
-        prediction =  self.net_plugin.infer(inputs={self.input_blob: processed_image})
+        # processed_image = self.preprocess_input(image)
+        logger.debug("To predict, image shape {}".format(image.shape))
+        prediction =  self.net_plugin.infer(inputs={self.input_blob: image})
         return prediction
 
     def check_plugin(self):
@@ -99,11 +105,12 @@ class facial_landmarks:
         Before feeding the data into the model for inference,
         you might have to preprocess it. This function is where you can do that.
         '''
+        logger.debug("Preprocess landmarks for {}".format(image))
         self.shape = self.net.inputs[self.input_blob].shape
         processed_image = cv2.resize(image,(self.input_shape[3], self.input_shape[2]))
         transposed_image = processed_image.transpose((2,0,1))
-        reshaped_image = processed_image.reshape(self.shape)
-        logger.debug("SHAPE: {}  {}   {}    {}".format(self.shape, processed_image.shape, transposed_image.shape, reshaped_image.shape))
+        reshaped_image = transposed_image.reshape(self.shape)
+        logger.debug("SHAPE: {}  {}   {}    {}".format(self.input_shape, processed_image.shape, transposed_image.shape, reshaped_image.shape))
         return reshaped_image
 
     def preprocess_output(self, outputs):
@@ -114,48 +121,61 @@ class facial_landmarks:
         '''
         logger.info("Processing output blobs")
         outputs = outputs[self.output_blob]
-        logger.debug("model predictions {}".format(outputs))
-        return outputs[0][0]
+        point_list = outputs[0].reshape((10))
+        positions = []
+        eyes = [0]*2
+        for i in range(0, len(point_list),2):
+            position = [0]*2
+            position[0] = point_list[i]
+            position[1] = point_list[i+1]
+            positions.append(position)
+            if i==0:
+                eyes[0] = [position[0]-10, position[1]-10, position[0]+10, position[1]+10]
+            if i==2:
+                eyes[1] = [position[0]-10, position[1]-10, position[0]+10, position[1]+10]
+
+        logger.debug("model predictions {}".format(positions))
+        return positions, eyes
 
 
-def get_draw_boxes(boxes, image):
+def get_draw_points(positions, image):
     '''
         Function that returns the boundinng boxes detected for class "person" 
         with a confidence greater than 0, paint the bounding boxes on image
         and counts them
     '''
-    image_h, image_w, _ = image.shape
-    logger.debug("Image shape {}".format(image.shape))
-    image_h=384
-    image_w = 672
-    num_detections = 0
-    max_conf = 0
+    shape = image.shape
+    image_h = shape[0]
+    image_w = shape[1]
+    logger.debug("shape for landmarks {}".format(shape))
     processed_image = cv2.resize(image,(image_w, image_h))
-    list_classes = []
-    for i, box in enumerate(boxes):
-        list_classes.append(box[2])
-        if box[2] > max_conf:
-            max_conf = box[2]
-        if box[2] > 0.071:
-            if box[1] == 1:
-                cv2.rectangle(processed_image,(int(box[3]*image_w), int(box[4]*image_h)), (int(box[5]*image_w), int(box[6]*image_h)), (0,0,255), 2)
-            num_detections +=1
-
-    logger.debug("MAX THR: {}, NUM CLASSES {}".format(max_conf, set(list_classes)))
-    return processed_image, num_detections
+    for point in positions:
+        cv2.circle(processed_image,(int(point[0]*image_w), int(point[1]*image_h)), 4, (0,0,255))
+        logger.debug("position: {}".format(int(point[0]*image_h), int(point[1]*image_w)))
+    return processed_image
 
 def main():
-    image = cv2.imread("/home/pjvazquez/Imágenes/captura-1-1.jpg")
+    image_file = "/home/pjvazquez/Imágenes/captura-1-7.jpg"
+
     model = facial_landmarks(MODEL_NAME)
     model.load_model()
-    prediction = model.predict(image)
-    logger.debug("Prediction: {}".format(prediction['detection_out'].shape))
-    logger.debug(prediction['detection_out'][0,0,1,:])
-    result = model.preprocess_output(outputs=prediction)
-    logger.debug("result shape: {} model shape {}".format(result.shape, model.shape))
-    image2, num = get_draw_boxes(result, image)
-    logger.info("Obtained {} Result: {}".format(num, result))
-    cv2.imwrite("image2.jpg", image2)
+
+    feed=InputFeeder(input_type='image', input_file=image_file)
+    feed.load_data()
+    for batch in feed.next_batch():
+        processed_image = model.preprocess_input(batch)
+        prediction = model.predict(processed_image)
+        logger.debug("Prediction: {}".format(prediction))
+        # TODO: finish this
+        logger.debug(prediction['95'])
+        result, eyes = model.preprocess_output(outputs=prediction)
+        logger.debug("result shape: {} model shape {}".format(result, model.shape))
+        image2 = get_draw_points(result, batch)
+        logger.info("Obtained Result: {}".format(result))
+        cv2.imshow("image", image2)
+        if cv2.waitKey(500) & 0xFF == ord('q'):
+            cv2.destroyAllWindows()
+            break
 
 if __name__ == '__main__':
     main()

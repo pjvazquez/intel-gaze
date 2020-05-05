@@ -10,7 +10,9 @@ import cv2
 import os
 import sys
 import math
+import json
 import logging as log
+from input_feeder import InputFeeder
 from openvino.inference_engine import IENetwork, IECore
 
 FORMATTER = log.Formatter("%(asctime)s — %(name)s — %(levelname)s — %(message)s")
@@ -20,8 +22,12 @@ logger = log.getLogger(__name__)
 logger.setLevel(log.DEBUG)
 logger.addHandler(console_handler)
 
-CPU_EXTENSION = "/opt/intel/openvino/deployment_tools/inference_engine/lib/intel64/libcpu_extension_sse4.so"
-MODEL_NAME = "/mnt/DATA/Python_Projects/intel-gaze/intel/gaze-estimation-adas-0002/FP32/gaze-estimation-adas-0002.xml"
+# retrieve and parse configuration
+with open("conf/application.conf", "r") as confFile:
+    conf = json.loads(confFile.read())
+
+CPU_EXTENSION = conf['CPU_extension']
+MODEL_NAME = conf['gaze_model']
 
 class gaze:
     '''
@@ -70,9 +76,8 @@ class gaze:
         This method is meant for running predictions on the input image.
         '''
         logger.info("making prediction")
-        processed_image = self.preprocess_input(image)
-        logger.debug("To predict, image shape {}".format(processed_image.shape))
-        prediction =  self.net_plugin.infer(inputs={self.input_blob: processed_image})
+        logger.debug("To predict, image shape {}".format(image.shape))
+        prediction =  self.net_plugin.infer(inputs={self.input_blob: image})
         return prediction
 
     def check_plugin(self):
@@ -93,18 +98,24 @@ class gaze:
             logger.debug("Not supported layers in model: {} ".format(not_supported_layers))
             exit(1)
 
-    def preprocess_input(self, image):
+    def preprocess_input(self, left_eye, right_eye):
         '''
         TODO: You will need to complete this method.
         Before feeding the data into the model for inference,
         you might have to preprocess it. This function is where you can do that.
         '''
-        self.shape = self.net.inputs[self.input_blob].shape
-        processed_image = cv2.resize(image,(self.input_shape[3], self.input_shape[2]))
-        transposed_image = processed_image.transpose((2,0,1))
-        reshaped_image = processed_image.reshape(self.shape)
-        logger.debug("SHAPE: {}  {}   {}    {}".format(self.shape, processed_image.shape, transposed_image.shape, reshaped_image.shape))
-        return reshaped_image
+        left_eye = cv2.resize(left_eye, (60, 60))
+        left_eye = left_eye.transpose((2, 0, 1))
+        left_eye = left_eye.reshape((1, 3, 60, 60))
+
+        right_eye = cv2.resize(right_eye, (60, 60))
+        right_eye = right_eye.transpose((2, 0, 1))
+        right_eye = right_eye.reshape((1, 3, 60, 60))
+
+        logger.debug("SHAPES  LE:{} RE:{}".format(left_eye.shape, right_eye.shape))
+
+        return left_eye,right_eye
+        
 
     def preprocess_output(self, outputs):
         '''
@@ -144,7 +155,7 @@ def get_draw_boxes(boxes, image):
     logger.debug("MAX THR: {}, NUM CLASSES {}".format(max_conf, set(list_classes)))
     return processed_image, num_detections
 
-def main():
+def main2():
     image = cv2.imread("/home/pjvazquez/Imágenes/captura-1-1.jpg")
     model = gaze(MODEL_NAME)
     model.load_model()
@@ -156,6 +167,29 @@ def main():
     image2, num = get_draw_boxes(result, image)
     logger.info("Obtained {} Result: {}".format(num, result))
     cv2.imwrite("image2.jpg", image2)
+
+def main():
+    image = cv2.imread("/home/pjvazquez/Imágenes/captura-1-3.jpg")
+    logger.debug("image frame {}".format(image.shape))
+    model = gaze(MODEL_NAME)
+    model.load_model()
+
+    feed=InputFeeder(input_type='video', input_file="bin/demo.mp4")
+    feed.load_data()
+    for batch in feed.next_batch():
+        logger.debug(batch.shape)
+        prediction = model.predict(batch)
+        logger.debug("Prediction: {}".format(prediction['detection_out'].shape))
+        logger.debug(prediction['detection_out'][0,0,1,:])
+        result = model.preprocess_output(outputs=prediction)
+        logger.debug("result shape: {} model shape {}".format(result.shape, model.shape))
+        image2, num = get_draw_boxes(result, batch)
+        logger.info("Obtained {} Result: {}".format(num, result))
+        cv2.imshow("image", image2)
+        if cv2.waitKey(150) & 0xFF == ord('q'):
+            cv2.destroyAllWindows()
+            break
+
 
 if __name__ == '__main__':
     main()
