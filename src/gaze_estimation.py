@@ -70,15 +70,19 @@ class gaze:
         
         return self.plugin
 
-    def predict(self, image):
+    def predict(self, head_pose, eyes):
         '''
         TODO: You will need to complete this method.
         This method is meant for running predictions on the input image.
         '''
         logger.info("making prediction")
-        logger.debug("To predict, image shape {}".format(image.shape))
-        prediction =  self.net_plugin.infer(inputs={self.input_blob: image})
-        return prediction
+        left_eye, right_eye, angles = self.preprocess_input(eyes, head_pose)
+        prediction =  self.net_plugin.infer(inputs={
+            "head_pose_angles": angles,
+            "left_eye_image": left_eye,
+            "right_eye_image": right_eye})
+        processed_prediction = self.preprocess_output(prediction)
+        return processed_prediction
 
     def check_plugin(self):
         '''
@@ -98,23 +102,30 @@ class gaze:
             logger.debug("Not supported layers in model: {} ".format(not_supported_layers))
             exit(1)
 
-    def preprocess_input(self, left_eye, right_eye):
+    def preprocess_input(self, eyes, head_pose):
         '''
         TODO: You will need to complete this method.
         Before feeding the data into the model for inference,
         you might have to preprocess it. This function is where you can do that.
         '''
-        left_eye = cv2.resize(left_eye, (60, 60))
+        left_eye = cv2.resize(eyes[0], (60, 60))
         left_eye = left_eye.transpose((2, 0, 1))
         left_eye = left_eye.reshape((1, 3, 60, 60))
 
-        right_eye = cv2.resize(right_eye, (60, 60))
+        right_eye = cv2.resize(eyes[1], (60, 60))
         right_eye = right_eye.transpose((2, 0, 1))
         right_eye = right_eye.reshape((1, 3, 60, 60))
 
         logger.debug("SHAPES  LE:{} RE:{}".format(left_eye.shape, right_eye.shape))
 
-        return left_eye,right_eye
+                # Pose, yaw and roll.
+        p_fc = head_pose["angle_p_fc"][0]
+        y_fc = head_pose["angle_y_fc"][0]
+        r_fc = head_pose["angle_r_fc"][0]
+        
+        angles = [[y_fc, p_fc, r_fc]]
+
+        return left_eye,right_eye, angles
         
 
     def preprocess_output(self, outputs):
@@ -123,10 +134,18 @@ class gaze:
         Before feeding the output of this model to the next model,
         you might have to preprocess the output. This function is where you can do that.
         '''
-        logger.info("Processing output blobs")
-        outputs = outputs[self.output_blob]
-        logger.debug("model predictions {}".format(outputs))
-        return outputs[0][0]
+        outputs=outputs[self.output_blob]
+        logger.debug("To process: {}".format(outputs))
+        gaze = outputs[0]
+        r = gaze[2]
+        
+        x = math.cos(r * math.pi / 180.0)
+        y = math.sin(r * math.pi / 180.0)
+
+        X = gaze[0] * x + gaze[1] * y
+        Y = -gaze[0] * y + gaze[1] * x
+
+        return (X, -Y), gaze
 
 
 def get_draw_boxes(boxes, image):
@@ -155,41 +174,3 @@ def get_draw_boxes(boxes, image):
     logger.debug("MAX THR: {}, NUM CLASSES {}".format(max_conf, set(list_classes)))
     return processed_image, num_detections
 
-def main2():
-    image = cv2.imread("/home/pjvazquez/Imágenes/captura-1-1.jpg")
-    model = gaze(MODEL_NAME)
-    model.load_model()
-    prediction = model.predict(image)
-    logger.debug("Prediction: {}".format(prediction['detection_out'].shape))
-    logger.debug(prediction['detection_out'][0,0,1,:])
-    result = model.preprocess_output(outputs=prediction)
-    logger.debug("result shape: {} model shape {}".format(result.shape, model.shape))
-    image2, num = get_draw_boxes(result, image)
-    logger.info("Obtained {} Result: {}".format(num, result))
-    cv2.imwrite("image2.jpg", image2)
-
-def main():
-    image = cv2.imread("/home/pjvazquez/Imágenes/captura-1-3.jpg")
-    logger.debug("image frame {}".format(image.shape))
-    model = gaze(MODEL_NAME)
-    model.load_model()
-
-    feed=InputFeeder(input_type='video', input_file="bin/demo.mp4")
-    feed.load_data()
-    for batch in feed.next_batch():
-        logger.debug(batch.shape)
-        prediction = model.predict(batch)
-        logger.debug("Prediction: {}".format(prediction['detection_out'].shape))
-        logger.debug(prediction['detection_out'][0,0,1,:])
-        result = model.preprocess_output(outputs=prediction)
-        logger.debug("result shape: {} model shape {}".format(result.shape, model.shape))
-        image2, num = get_draw_boxes(result, batch)
-        logger.info("Obtained {} Result: {}".format(num, result))
-        cv2.imshow("image", image2)
-        if cv2.waitKey(150) & 0xFF == ord('q'):
-            cv2.destroyAllWindows()
-            break
-
-
-if __name__ == '__main__':
-    main()

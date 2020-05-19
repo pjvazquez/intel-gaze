@@ -113,26 +113,41 @@ class facial_landmarks:
         logger.debug("SHAPE: {}  {}   {}    {}".format(self.input_shape, processed_image.shape, transposed_image.shape, reshaped_image.shape))
         return reshaped_image
 
-    def preprocess_output(self, outputs):
+    def preprocess_output(self, outputs, image):
         '''
         TODO: You will need to complete this method.
         Before feeding the output of this model to the next model,
         you might have to preprocess the output. This function is where you can do that.
         '''
-        logger.info("Processing output blobs")
-        outputs = outputs[self.output_blob]
-        point_list = outputs[0].reshape((10))
+        shape = image.shape
+        image_h = shape[0]
+        image_w = shape[1]
+        processed_image = cv2.resize(image,(image_w, image_h))
+        logger.info("Processing output of len: {}, on image shape: {}".format(len(outputs), image.shape))
+        outputs = outputs[self.output_blob].reshape(10)
         positions = []
+        size=30
         eyes = [0]*2
-        for i in range(0, len(point_list),2):
-            position = [0]*2
-            position[0] = point_list[i]
-            position[1] = point_list[i+1]
-            positions.append(position)
+        for i in range(0,len(outputs),2):
+            position = [outputs[i], outputs[i+1]]
             if i==0:
-                eyes[0] = [position[0]-10, position[1]-10, position[0]+10, position[1]+10]
+                positions.append(position)
+                logger.debug("pos num: {}, position: {}".format(i, position))
+                xmin = 0 if int(position[0]*image_w-size)<0 else int(position[0]*image_w-size)
+                ymin = 0 if int(position[1]*image_h-size)<0 else int(position[1]*image_h-size)
+                xmax = image_w if int(position[0]*image_w+size)>image_w else int(position[0]*image_w+size)
+                ymax = image_h if int(position[1]*image_h+size)>image_h else int(position[1]*image_h+size)
+                logger.debug("11111111 {},{},{},{}".format(xmin, ymin, xmax, ymax))
+                eyes[0] = processed_image[xmin:xmax, ymin:ymax ]
             if i==2:
-                eyes[1] = [position[0]-10, position[1]-10, position[0]+10, position[1]+10]
+                positions.append(position)
+                logger.debug("pos num: {}, position: {}".format(i, position))
+                xmin = 0 if int(position[0]*image_w-size)<0 else int(position[0]*image_w-size)
+                ymin = 0 if int(position[1]*image_h-size)<0 else int(position[1]*image_h-size)
+                xmax = image_w if int(position[0]*image_w+size)>image_w else int(position[0]*image_w+size)
+                ymax = image_h if int(position[1]*image_h+size)>image_h else int(position[1]*image_h+size)
+                logger.debug("222222222 {},{},{},{}".format(xmin, ymin, xmax, ymax))
+                eyes[1] = processed_image[xmin:xmax, ymin:ymax ]
 
         logger.debug("model predictions {}".format(positions))
         return positions, eyes
@@ -165,14 +180,18 @@ def main():
     for batch in feed.next_batch():
         processed_image = model.preprocess_input(batch)
         prediction = model.predict(processed_image)
-        logger.debug("Prediction: {}".format(prediction))
+        # logger.debug("Prediction: {}".format(prediction))
         # TODO: finish this
         logger.debug(prediction['95'])
-        result, eyes = model.preprocess_output(outputs=prediction)
+        result, eyes = model.preprocess_output(outputs=prediction, image=batch)
         logger.debug("result shape: {} model shape {}".format(result, model.shape))
         image2 = get_draw_points(result, batch)
         logger.info("Obtained Result: {}".format(result))
         cv2.imshow("image", image2)
+        logger.debug("eye shape: {}".format(eyes[0].shape))
+        cv2.imshow("le", eyes[0])
+        cv2.imshow("re", eyes[1])
+
         if cv2.waitKey(500) & 0xFF == ord('q'):
             cv2.destroyAllWindows()
             break
